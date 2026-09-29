@@ -1,0 +1,273 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// TENANT AND AUTH MODELS
+// ============================================
+
+model Tenant {
+  tenantKey       String   @id @db.VarChar(8)
+  name            String   @db.VarChar(200)
+  taxId           String?  @db.VarChar(50)
+  baseCurrency    String   @default("TWD") @db.VarChar(3)
+  timeZone        String   @default("Asia/Taipei") @db.VarChar(50)
+  defaultLanguage String   @default("zh-TW") @db.VarChar(10)
+  status          String   @default("active") @db.VarChar(20)
+  settings        Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("tenants")
+}
+
+model IdCounter {
+  tenantKey String @db.VarChar(8)
+  entity    String @db.VarChar(50)
+  nextValue Int    @default(1)
+
+  @@id([tenantKey, entity])
+  @@map("id_counters")
+}
+
+model User {
+  tenantKey    String    @db.VarChar(8)
+  id           Int
+  email        String    @db.VarChar(255)
+  name         String    @db.VarChar(100)
+  passwordHash String?   @db.VarChar(255)
+  role         String    @db.VarChar(20)
+  language     String?   @db.VarChar(10)
+  status       String    @default("invited") @db.VarChar(20)
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
+  workerId     Int?
+  totpSecret   String?   @db.VarChar(255)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  @@id([tenantKey, id])
+  @@unique([tenantKey, email])
+  @@map("users")
+}
+
+model RefreshToken {
+  tenantKey    String    @db.VarChar(8)
+  id           Int
+  userId       Int
+  familyId     String    @db.VarChar(50)
+  tokenHash    String    @db.VarChar(255)
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById Int?
+  createdAt    DateTime  @default(now())
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, familyId])
+  @@index([tenantKey, userId])
+  @@map("refresh_tokens")
+}
+
+model TokenBlacklist {
+  tenantKey String   @db.VarChar(8)
+  id        Int
+  tokenHash String   @db.VarChar(255)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@id([tenantKey, id])
+  @@index([tokenHash])
+  @@map("token_blacklist")
+}
+
+model AuditLog {
+  tenantKey  String   @db.VarChar(8)
+  id         Int
+  entity     String   @db.VarChar(50)
+  entityId   Int?
+  action     String   @db.VarChar(50)
+  before     Json?
+  after      Json?
+  userId     Int?
+  deviceId   Int?
+  workerId   Int?
+  ip         String?  @db.VarChar(50)
+  occurredAt DateTime @default(now())
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, entity, entityId])
+  @@index([tenantKey, occurredAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// INVENTORY MODELS
+// ============================================
+
+model Product {
+  tenantKey                  String    @db.VarChar(8)
+  id                         Int
+  name                       String    @db.VarChar(200)
+  itemType                   String    @db.VarChar(20)
+  uom                        String    @db.VarChar(10)
+  purchaseUom                String?   @db.VarChar(10)
+  purchaseUomFactor          Decimal?  @db.Decimal(10, 4)
+  canPurchase                Boolean   @default(false)
+  canSell                    Boolean   @default(false)
+  canManufacture             Boolean   @default(false)
+  isStocked                  Boolean   @default(true)
+  trackingMode               String    @default("lot") @db.VarChar(10)
+  hasShelfLife               Boolean   @default(false)
+  shelfLifeDays              Int?
+  pickingRule                String    @default("FIFO") @db.VarChar(10)
+  requiresIncomingInspection Boolean   @default(false)
+  safetyStock                Decimal   @default(0) @db.Decimal(15, 4)
+  reorderPoint               Decimal   @default(0) @db.Decimal(15, 4)
+  minStockLevel              Decimal   @default(0) @db.Decimal(15, 4)
+  maxStockLevel              Decimal?  @db.Decimal(15, 4)
+  leadTimeDays               Int?
+  costingMethod              String    @default("moving_average") @db.VarChar(20)
+  standardCost               Int?
+  inventoryAccountId         Int?
+  cogsAccountId              Int?
+  stockQuantity              Decimal   @default(0) @db.Decimal(15, 4)
+  averageCost                Int       @default(0)
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+  deletedAt                  DateTime?
+
+  lots     Lot[]
+  balances StockBalance[]
+  entries  StockEntry[]
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, itemType])
+  @@index([tenantKey, name])
+  @@map("products")
+}
+
+model Warehouse {
+  tenantKey String    @db.VarChar(8)
+  id        Int
+  name      String    @db.VarChar(100)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  locations Location[]
+
+  @@id([tenantKey, id])
+  @@map("warehouses")
+}
+
+model Location {
+  tenantKey    String    @db.VarChar(8)
+  id           Int
+  warehouseId  Int
+  name         String    @db.VarChar(100)
+  locationType String    @db.VarChar(20)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  warehouse Warehouse @relation(fields: [tenantKey, warehouseId], references: [tenantKey, id])
+
+  balances          StockBalance[]
+  entriesFrom       StockEntry[]   @relation("FromLocation")
+  entriesTo         StockEntry[]   @relation("ToLocation")
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, warehouseId])
+  @@map("locations")
+}
+
+model Lot {
+  tenantKey     String    @db.VarChar(8)
+  id            Int
+  productId     Int
+  supplierLotNo String?   @db.VarChar(100)
+  receivedAt    DateTime?
+  producedAt    DateTime?
+  expiresAt     DateTime?
+  status        String    @default("available") @db.VarChar(20)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  product  Product        @relation(fields: [tenantKey, productId], references: [tenantKey, id])
+  balances StockBalance[]
+  entries  StockEntry[]
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, productId, expiresAt])
+  @@map("lots")
+}
+
+model LotGenealogy {
+  tenantKey         String  @db.VarChar(8)
+  id                Int
+  inputLotId        Int
+  outputLotId       Int
+  productionOrderId Int
+  quantity          Decimal @db.Decimal(15, 4)
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, inputLotId])
+  @@index([tenantKey, outputLotId])
+  @@map("lot_genealogy")
+}
+
+model StockBalance {
+  tenantKey  String  @db.VarChar(8)
+  id         Int
+  productId  Int
+  lotId      Int?
+  locationId Int
+  onHand     Decimal @default(0) @db.Decimal(15, 4)
+  reserved   Decimal @default(0) @db.Decimal(15, 4)
+
+  product  Product  @relation(fields: [tenantKey, productId], references: [tenantKey, id])
+  lot      Lot?     @relation(fields: [tenantKey, lotId], references: [tenantKey, id])
+  location Location @relation(fields: [tenantKey, locationId], references: [tenantKey, id])
+
+  @@id([tenantKey, id])
+  @@unique([tenantKey, productId, lotId, locationId])
+  @@index([tenantKey, locationId])
+  @@map("stock_balances")
+}
+
+model StockEntry {
+  tenantKey      String   @db.VarChar(8)
+  id             Int
+  productId      Int
+  lotId          Int?
+  fromLocationId Int?
+  toLocationId   Int?
+  movementType   String   @db.VarChar(30)
+  quantity       Decimal  @db.Decimal(15, 4)
+  unitCost       Int?
+  referenceType  String?  @db.VarChar(30)
+  referenceId    Int?
+  reasonCode     String?  @db.VarChar(50)
+  reversesId     Int?
+  createdById    Int
+  createdAt      DateTime @default(now())
+
+  product      Product   @relation(fields: [tenantKey, productId], references: [tenantKey, id])
+  lot          Lot?      @relation(fields: [tenantKey, lotId], references: [tenantKey, id])
+  fromLocation Location? @relation("FromLocation", fields: [tenantKey, fromLocationId], references: [tenantKey, id])
+  toLocation   Location? @relation("ToLocation", fields: [tenantKey, toLocationId], references: [tenantKey, id])
+
+  @@id([tenantKey, id])
+  @@index([tenantKey, productId, createdAt])
+  @@index([tenantKey, lotId])
+  @@index([tenantKey, referenceType, referenceId])
+  @@map("stock_entries")
+}
